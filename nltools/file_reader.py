@@ -15,14 +15,15 @@ from nltools.data import Design_Matrix
 import warnings
 
 
-def onsets_to_dm(F, sampling_freq, run_length, header='infer', sort=False, keep_separate=True, add_poly=None, unique_cols=[], fill_na=None, **kwargs):
+def onsets_to_dm(F, sampling_freq, run_length, header='infer', sort=False, keep_separate=True, add_poly=None, unique_cols=[], fill_na=None, bids=False, **kwargs):
     """
-    This function can assist in reading in one or several in a 2-3 column onsets files, specified in seconds and converting it to a Design Matrix organized as samples X Stimulus Classes. Onsets files **must** be organized with columns in one of the following 4 formats:
+    This function can assist in reading in one or several in a 2-3 column onsets files, specified in seconds and converting it to a Design Matrix organized as samples X Stimulus Classes. Onsets files **must** be organized with columns in one of the following 5 formats:
 
     1) 'Stim, Onset'
     2) 'Onset, Stim'
     3) 'Stim, Onset, Duration'
     4) 'Onset, Duration, Stim'
+    5) 'onset, duration, trial_type' <--- SR Edit (added BIDs *events.tsv specification)
 
     No other file organizations are currently supported
 
@@ -61,29 +62,55 @@ def onsets_to_dm(F, sampling_freq, run_length, header='infer', sort=False, keep_
         elif df.shape[1] == 1 or df.shape[1] > 3:
             raise ValueError("Can only handle files with 2 or 3 columns!")
 
-        # Try to infer the header
-        if header is None:
-            possibleHeaders = ['Stim', 'Onset', 'Duration']
-            if isinstance(df.iloc[0, 0], six.string_types):
-                df.columns = possibleHeaders[:df.shape[1]]
-            elif isinstance(df.iloc[0, df.shape[1]-1], six.string_types):
-                df.columns = possibleHeaders[1:] + [possibleHeaders[0]]
-            else:
-                raise ValueError("Can't figure out onset file organization. Make sure file has no more than 3 columns specified as 'Stim,Onset,Duration' or 'Onset,Duration,Stim'")
-        df['Onset'] = df['Onset'].apply(lambda x: int(np.floor(x/TR)))
+        if bids: # SR Edit, if data are in BIDs format, bids=True
+            # Try to infer the header
+            if header is None:
+                possibleHeaders = ['trial_type', 'onset', 'duration']
+                if isinstance(df.iloc[0, 0], six.string_types):
+                    df.columns = possibleHeaders[:df.shape[1]]
+                elif isinstance(df.iloc[0, df.shape[1]-1], six.string_types):
+                    df.columns = possibleHeaders[1:] + [possibleHeaders[0]]
+                else:
+                    raise ValueError("Can't figure out onset file organization. Make sure file has no more than 3 columns specified as 'Stim,Onset,Duration' or 'Onset,Duration,Stim' or 'onset,duration,trial_type'")
+            df['onset'] = df['onset'].apply(lambda x: int(np.floor(x/TR)))
 
-        # Build dummy codes
-        X = Design_Matrix(np.zeros([run_length, len(df['Stim'].unique())]), columns=df['Stim'].unique(), sampling_freq=sampling_freq)
-        for i, row in df.iterrows():
-            if df.shape[1] == 3:
-                dur = np.ceil(row['Duration']/TR)
-                X.ix[row['Onset']-1:row['Onset']+dur-1, row['Stim']] = 1
-            elif df.shape[1] == 2:
-                X.ix[row['Onset'], row['Stim']] = 1
-        if sort:
-            X = X.reindex(sorted(X.columns), axis=1)
+            # Build dummy codes
+            X = Design_Matrix(np.zeros([run_length, len(df['trial_type'].unique())]), columns=df['trial_type'].unique(), sampling_freq=sampling_freq)
+            for i, row in df.iterrows():
+                if df.shape[1] == 3:
+                    dur = np.ceil(row['durations']/TR)
+                    X.loc[row['onset']-1:row['onset']+dur-1, row['trial_type']] = 1
+                elif df.shape[1] == 2:
+                    X.loc[row['onset'], row['trial_type']] = 1
+            if sort:
+                X = X.reindex(sorted(X.columns), axis=1)
 
-        out.append(X)
+            out.append(X)
+        else: # use default if bids=False
+            # Try to infer the header
+            if header is None:
+                possibleHeaders = ['Stim', 'Onset', 'Duration']
+                if isinstance(df.iloc[0, 0], six.string_types):
+                    df.columns = possibleHeaders[:df.shape[1]]
+                elif isinstance(df.iloc[0, df.shape[1]-1], six.string_types):
+                    df.columns = possibleHeaders[1:] + [possibleHeaders[0]]
+                else:
+                    raise ValueError("Can't figure out onset file organization. Make sure file has no more than 3 columns specified as 'Stim,Onset,Duration' or 'Onset,Duration,Stim' or 'onset,duration,trial_type'")
+            df['Onset'] = df['Onset'].apply(lambda x: int(np.floor(x/TR)))
+
+            # Build dummy codes
+            X = Design_Matrix(np.zeros([run_length, len(df['Stim'].unique())]), columns=df['Stim'].unique(), sampling_freq=sampling_freq)
+            for i, row in df.iterrows():
+                if df.shape[1] == 3:
+                    dur = np.ceil(row['Duration']/TR)
+                    X.loc[row['Onset']-1:row['Onset']+dur-1, row['Stim']] = 1
+                elif df.shape[1] == 2:
+                    X.loc[row['Onset'], row['Stim']] = 1
+            if sort:
+                X = X.reindex(sorted(X.columns), axis=1)
+
+            out.append(X)
+
     if len(out) > 1:
         out_dm = out[0].append(out[1:], keep_separate=keep_separate, add_poly=add_poly, unique_cols=unique_cols, fill_na=fill_na)
     else:
